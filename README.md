@@ -12,8 +12,7 @@ data, for purposes of research.
   proprietary data before making it available to the public.
 
 ## Analysis and Modeling
-- Aside from the basic EDA and NLP analyses, various cutting-edge NLP tasks are scheduled to be performed on the scraped data in the near future.
-- These tasks include:
+- Aside from the basic EDA and NLP analyses, various cutting-edge NLP tasks are scheduled to be performed on the scraped data in the near future. These tasks include:
 - Fine-tuning a sentence transformer on the specialized text data to create domain-specific vectorization, which will be used for topic modeling
   and semantic search purposes.
 - Creating philosophy-specific Natural Language Inference (NLI) datasets for benchmarking.
