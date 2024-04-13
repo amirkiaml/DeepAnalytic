@@ -4,9 +4,14 @@ A large amount of specialized philosophical data has been scraped from leading a
 data, for purposes of research.
 
 ## Data
+### Springer
 - The metadata of 28 Springer Nature philosophical journals have been scraped. This records the metadata of around 800k pages of philosophical texts.
-- The codes to scrape the metadata, as well as the text data from the papers, will be uploaded here.
-- The scraped dataframes will become available through a data-sharing platform in the near future.
+  
+- The codes to scrape the metadata, as well as the text data from the papers, is uploaded here.'
+### SEP
+- I have scarped the entirety of the Stanford Encyclopedia of Philosophy, edition 2024.
+- 
+## Other
 - The text data of other philosophical journals, from other publishers such as Oxford University Press, is also scraped. In particular, over 10k pages of papers from
   the leading journal *Analysis*, alongside their metadata, are scraped. The relevant codes will be shared and the datasets will be uploaded after preprocessing the
   proprietary data before making it available to the public.
