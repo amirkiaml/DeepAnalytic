@@ -1,0 +1,2 @@
+IndexName,NumArticles,Splitter,ChunkSize,EmbeddingModel,Query,QueryType,NumQueriesGenerated,NumDocsPerQuery,RerankCritique,OrigQuery,GenQueries,DocsPerQuery
+example-index,100,RecursiveCharacterTextSplitter,500,text-embedding-3-small,What does Socrates think about death?,Simple,5,10,R,What does Socrates think about death?,"['Query 1', 'Query 2', 'Query 3']","[[{'doc1': 'content1'}, {'doc2': 'content2'}], [{'doc3': 'content3'}], []]"
