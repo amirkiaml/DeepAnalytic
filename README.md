@@ -1,25 +1,75 @@
 # DeepAnalytic
-This repository is dedicated to my research project on utilizing LLMs for various use cases in the context of Analytic Philosophy.
-A large amount of specialized philosophical data has been scraped from leading academic journals. Various cutting-edge NLP tasks will be performed on the collected
-data, for purposes of research.
+
+A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy,
+built on a custom-scraped philosophy corpus. Started as a research project on
+applying LLMs to analytic philosophy texts; the current focus is a
+section-aware RAG pipeline — chunking articles along their actual heading
+structure rather than blind token windows — with reranking and a working
+query interface.
+
+## What's here
+
+- **`ingest.py`** — indexing pipeline: loads the SEP corpus, splits each
+  article into sections using its Table of Contents (with a regex fallback
+  for articles where TOC parsing doesn't fully resolve), chunks within
+  section boundaries, embeds with OpenAI, and upserts to Pinecone.
+- **`rag_pipeline.py`** — query-time pipeline: retrieve → rerank (Cohere) →
+  generate (OpenAI). Includes both a reranked path and a naive-retrieval-only
+  path for baseline comparison.
+- **`section_parser.py`** — the TOC-aware chunking logic. Falls back cleanly
+  from exact TOC matching to regex heading detection to whole-article
+  indexing, and records which method was used per article for auditing.
+- **`chunker.py`**, **`embeddings.py`**, **`vectorstore.py`** — supporting
+  modules for token-based text splitting, embedding model config, and
+  Pinecone index management.
+- **`chat.py`** — terminal chat interface for querying the indexed corpus.
+- **`check_chunks.py`** — diagnostic tool for inspecting which chunks get
+  retrieved for a given query, useful for debugging retrieval quality.
+- **`config.py`** — centralized, environment-driven settings (API keys,
+  model names, retrieval parameters). No secrets in code.
+- **`notebooks/`** — the original research notebooks this project grew out
+  of: corpus scraping, naive RAG, reranking, multiquery retrieval, and
+  early parameter-testing experiments. Kept as a record of how the
+  production pipeline evolved.
 
 ## Data
-### Springer
-- The metadata of 28 Springer Nature philosophical journals have been scraped. This records the metadata of around 800k pages of philosophical texts.
-  
-- The codes to scrape the metadata, as well as the text data from the papers, is uploaded here.'
-### SEP
-- I have scarped the entirety of the Stanford Encyclopedia of Philosophy, edition 2024.
-- 
-## Other
-- The text data of other philosophical journals, from other publishers such as Oxford University Press, is also scraped. In particular, over 10k pages of papers from
-  the leading journal *Analysis*, alongside their metadata, are scraped. The relevant codes will be shared and the datasets will be uploaded after preprocessing the
-  proprietary data before making it available to the public.
 
-## Analysis and Modeling
-- Aside from the basic EDA and NLP analyses, various cutting-edge NLP tasks are scheduled to be performed on the scraped data in the near future. These tasks include:
-- Fine-tuning a sentence transformer on the specialized text data to create domain-specific vectorization, which will be used for topic modeling
-  and semantic search purposes.
-- Creating philosophy-specific Natural Language Inference (NLI) datasets for benchmarking.
-- Question answering on philosophical text data
-   
+### Stanford Encyclopedia of Philosophy (SEP)
+The entirety of the SEP, 2024 edition, has been scraped — full article
+text, tables of contents, bibliographies, and metadata (authors, dates,
+citations). This is the corpus the current RAG pipeline runs on.
+
+### Springer
+Metadata for 28 Springer Nature philosophy journals (~800k pages) has been
+scraped. Scraping code is included; full-text indexing of this corpus is a
+future direction.
+
+### Other
+Text and metadata for ~10k pages from *Analysis* (Oxford University Press)
+have also been scraped. Code will be shared and the dataset released after
+preprocessing, pending licensing review.
+
+## Why section-aware chunking
+
+Standard RAG chunks articles into fixed-size token windows regardless of
+content structure, which means a single chunk can straddle two unrelated
+subsections — hurting both retrieval precision and the coherence of what
+gets handed to the LLM as context. This pipeline instead uses each SEP
+article's own Table of Contents to locate real section boundaries in the
+body text, then chunks within those boundaries. Each chunk's section title
+becomes part of its metadata, giving the reranker and the LLM real
+structural context (e.g. "Avicenna and the Aristotelian Tradition" rather
+than an anonymous span of text).
+
+On an initial test run (100 articles), TOC-based section parsing succeeded
+fully on 95% of articles and partially on the remaining 5%, with no
+articles falling back to plain regex heading detection or failing outright.
+
+## Roadmap
+
+- Full-corpus indexing (currently tested on a 100-article slice)
+- FastAPI service wrapping `rag_pipeline.py`
+- Retrieval quality benchmarking across chunk size / embedding model
+  configurations (schema started in earlier notebook experiments)
+- Deployment (Azure)
+- Open-source model option alongside the OpenAI-backed pipeline
