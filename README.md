@@ -25,8 +25,14 @@ query interface.
 - **`chat.py`** — terminal chat interface for querying the indexed corpus.
 - **`check_chunks.py`** — diagnostic tool for inspecting which chunks get
   retrieved for a given query, useful for debugging retrieval quality.
+- **`run_eval.py`** — automation script that runs a systematic question
+  set through both naive and reranked retrieval modes and logs the
+  results for scoring; see `tests/` and Evaluation below.
 - **`config.py`** — centralized, environment-driven settings (API keys,
   model names, retrieval parameters). No secrets in code.
+- **`tests/`** — the evaluation question set, raw results, and per-question
+  scoring (`eval_systematic.csv`, `eval_systematic_results.csv`,
+  `eval_scored.csv`).
 - **`notebooks/`** — the original research notebooks this project grew out
   of: corpus scraping, naive RAG, reranking, multiquery retrieval, and
   early parameter-testing experiments. Kept as a record of how the
@@ -65,11 +71,43 @@ On an initial test run (100 articles), TOC-based section parsing succeeded
 fully on 95% of articles and partially on the remaining 5%, with no
 articles falling back to plain regex heading detection or failing outright.
 
+## Evaluation
+
+A systematic naive-vs-reranked retrieval comparison was run against the
+100-article test index: 10 articles chosen for topical and structural
+variety, 2 questions each (one narrow/section-specific, one
+broad/synthesizing), 40 total runs, each scored on Accuracy, Source
+Match, and Completeness against a key written before any answers were
+seen.
+
+| | Accuracy | Source Match | Completeness | Overall |
+|---|---|---|---|---|
+| Naive retrieval | 4.84 / 5 | 3.63 / 5 | 4.11 / 5 | 4.19 |
+| With reranking | 4.79 / 5 | 3.68 / 5 | 3.68 / 5 | 4.05 |
+
+The headline finding wasn't "reranking wins" — on this sample, reranking
+was roughly flat on Accuracy and only marginally better on Source Match,
+while actually scoring *lower* on Completeness. Two runs surfaced a
+concrete failure mode: on broad, synthesizing questions, the reranker
+sometimes deprioritized the one chunk containing the answer even though
+naive retrieval's wider candidate pool caught it, causing the pipeline
+to falsely report the context as insufficient.
+
+Full test set, answers, sources returned, and per-question scoring with
+notes are in `tests/eval_scored.csv`. Write-up: [Building a RAG System
+That Knows What Section It's In (Part 1)](#) — link once published.
+
+**AI-assist disclosure for this evaluation:** Claude drafted the article
+selection, the questions, the expected-key-points rubric, and the
+automation script (`run_eval.py`) that ran all 40 tests, and did the
+first scoring pass. A second, independent human scoring pass is
+recorded in the same file's `Your_*` columns.
+
 ## Roadmap
 
 - Full-corpus indexing (currently tested on a 100-article slice)
 - FastAPI service wrapping `rag_pipeline.py`
-- Retrieval quality benchmarking across chunk size / embedding model
-  configurations (schema started in earlier notebook experiments)
+- Investigate the reranker's Completeness gap found in evaluation above,
+  before treating reranking as a strict improvement over naive retrieval
 - Deployment (Azure)
 - Open-source model option alongside the OpenAI-backed pipeline
