@@ -97,11 +97,12 @@ Full test set, answers, sources returned, and per-question scoring with
 notes are in `tests/eval_scored.csv`. Write-up: [Building a RAG System
 That Knows What Section It's In (Part 1)](#) — link once published.
 
-**AI-assist disclosure for this evaluation:** Claude drafted the article
-selection, the questions, the expected-key-points rubric, and the
+**AI-assist disclosure for this evaluation:** Claude Opus 5 drafted the 
+article selection, the questions, the expected-key-points rubric, and the
 automation script (`run_eval.py`) that ran all 40 tests, and did the
 first scoring pass. A second, independent human scoring pass is
-recorded in the same file's `Your_*` columns.
+recorded in the same file's `Your_*` columns -- those are filled by
+me.
 
 ## Roadmap
 
@@ -109,5 +110,5 @@ recorded in the same file's `Your_*` columns.
 - FastAPI service wrapping `rag_pipeline.py`
 - Investigate the reranker's Completeness gap found in evaluation above,
   before treating reranking as a strict improvement over naive retrieval
-- Deployment (Azure)
+- Deployment (AWS)
 - Open-source model option alongside the OpenAI-backed pipeline
