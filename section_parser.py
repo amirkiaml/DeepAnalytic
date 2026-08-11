@@ -45,7 +45,11 @@ def parse_toc(toc_text: str) -> dict:
 
         if m := re.match(r'^(\d+)\.\s+(.+)$', line):
             current = m.group(1)
-            sections[current] = {"title": m.group(2).strip(), "subsections": {}}
+            # "section_title" here means the heading text as written in the
+            # TOC (e.g. "Historical Outline") — NOT the article's own Title
+            # column. Named explicitly to avoid confusion with row["Title"]
+            # in ingest.py, which is the actual article title.
+            sections[current] = {"section_title": m.group(2).strip(), "subsections": {}}
 
         elif m := re.match(r'^(\d+\.\d+)\s+(.+)$', line):
             if current is not None:
@@ -130,7 +134,7 @@ def split_into_sections(toc_text: str, body_text: str):
     sections = []
     for i, (number, start) in enumerate(ordered):
         end = ordered[i + 1][1] if i + 1 < len(ordered) else len(body_text)
-        title = toc.get(number, {}).get("title", f"Section {number}")
-        sections.append((title, body_text[start:end]))
+        section_title = toc.get(number, {}).get("section_title", f"Section {number}")
+        sections.append((section_title, body_text[start:end]))
 
     return sections, parsed_how

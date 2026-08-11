@@ -5,29 +5,37 @@ Deployable RAG pipeline: retrieval (Pinecone) -> rerank (Cohere) -> generation (
 No interactive input() calls — everything is driven by config/environment so this
 can run inside a web service (FastAPI, etc.) with no human at a terminal.
 
+Embedding model and Pinecone connection now go through the shared embeddings.py
+and vectorstore.py modules (the same ones ingest.py uses) instead of building
+separate clients here. This guarantees indexing and querying always agree on
+embedding model/dimension — a mismatch between the two silently breaks
+retrieval, so there should only ever be one place in the codebase that
+decides what "the embedding model" is.
+
 Note: conversational memory (multi-turn follow-ups) was tried and pulled out
 for now — each query() / query_naive() call is fully independent, no history.
 """
 
 from langchain_pinecone import PineconeVectorStore
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_openai import ChatOpenAI
 import cohere
 
 from config import settings
+from embeddings import get_embedder
+from vectorstore import VectorDB
 
 
 class RerankRAG:
     def __init__(self):
-        self.embed = OpenAIEmbeddings(
-            model=settings.EMBEDDING_MODEL,
-            openai_api_key=settings.OPENAI_API_KEY,
-        )
+        # Shared embedding model — same source ingest.py uses, so query-time
+        # embeddings always match what was used to build the index.
+        self.embed = get_embedder()
 
-        self.vectorstore = PineconeVectorStore(
-            index_name=settings.PINECONE_INDEX_NAME,
-            embedding=self.embed,
-            pinecone_api_key=settings.PINECONE_API_KEY,
-        )
+        # Shared Pinecone connection logic. connect_to_index() assumes the
+        # index already exists (built by ingest.py) — it does not create one.
+        vector_db = VectorDB()
+        index = vector_db.connect_to_index(settings.PINECONE_INDEX_NAME)
+        self.vectorstore = PineconeVectorStore(index=index, embedding=self.embed)
 
         self.co = cohere.Client(api_key=settings.COHERE_API_KEY)
 
@@ -80,7 +88,9 @@ class RerankRAG:
             top_n: number of docs to keep after reranking (defaults to config)
 
         Returns:
-            dict with 'answer' (str) and 'sources' (list of metadata dicts)
+            dict with 'answer' (str) and 'sources' (list of metadata dicts,
+            each including 'title' — the article title — and 'section' —
+            the sub-heading the chunk came from, per section_parser.py)
         """
         k = k or settings.RETRIEVAL_K
         top_n = top_n or settings.RERANK_TOP_N
@@ -105,11 +115,11 @@ class RerankRAG:
         )
 
         # Walk the full reranked list (best score first) and keep up to
-        # max_per_title chunks per unique article. A hard cap of 1 can
-        # silently drop genuinely complementary content from long survey
-        # articles that cover multiple angles (e.g. one chunk discussing
-        # the Apology's agnosticism, another discussing the Phaedo's
-        # immortality argument) — both relevant, from the same title.
+        # max_per_title chunks per unique article (metadata["title"] —
+        # the article title, not to be confused with metadata["section"],
+        # the sub-heading within it). A hard cap of 1 can silently drop
+        # genuinely complementary content from long survey articles that
+        # cover multiple angles — both relevant, from the same article.
         # A cap of 2 balances that against one article flooding the results.
         max_per_title = 2
         title_counts = {}
@@ -135,4 +145,4 @@ if __name__ == "__main__":
     print("\nANSWER:\n", result["answer"])
     print("\nSOURCES:")
     for s in result["sources"]:
-        print(" -", s.get("title", "unknown"), s.get("source", ""))
+        print(" -", s.get("title", "unknown"), "|", s.get("section", ""), "|", s.get("source", ""))
