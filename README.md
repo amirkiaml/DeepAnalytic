@@ -38,6 +38,67 @@ query interface.
   early parameter-testing experiments. Kept as a record of how the
   production pipeline evolved.
 
+## Running it
+
+All commands below assume you're in the project root with the
+`deepanalytic` conda environment activated (`conda activate deepanalytic`)
+and a `.env` file present with the required API keys (see `config.py`
+for the full list).
+
+```
+python ingest.py
+```
+Builds the Pinecone index: loads the SEP corpus, section-parses each
+article, chunks it, embeds the chunks, and upserts them. `TEST_MODE` and
+`TEST_ROWS` at the top of the file control whether this runs against the
+full corpus or a small slice — leave `TEST_MODE = True` for a cheap,
+fast sanity check before committing to a full (paid) indexing run.
+
+```
+python chat.py
+```
+Starts an interactive terminal chat against the indexed corpus. Type a
+question, then choose `naive` or `rerank` (default) mode when prompted.
+Prints the answer plus the source articles/sections it was drawn from.
+Type `exit` or `quit` to stop.
+
+```
+python check_chunks.py
+```
+Diagnostic tool: shows the raw chunks retrieved for a single hardcoded
+query/article pair (edit `TARGET_TITLE` and `QUERY` at the top of the
+file) before reranking happens. Useful for confirming retrieval is
+actually finding the right passage when an answer looks off.
+
+```
+python rag_pipeline.py
+```
+Runs a single hardcoded test query directly against `RerankRAG`, useful
+as a quick smoke test after changing the pipeline — confirms indexing,
+retrieval, reranking, and generation are all wired correctly without
+needing the interactive chat loop.
+
+```
+python run_eval.py
+```
+Runs the full systematic evaluation: every question in
+`tests/eval_systematic.csv`, in both naive and rerank mode, logging real
+answers and sources to `tests/eval_systematic_results.csv`. Skips rows
+that already have an answer, so a failed run can be safely re-launched
+without re-paying for completed rows. This makes real API calls — don't
+run it casually.
+
+## Environment setup
+
+```
+conda create -n deepanalytic python=3.11 -y
+conda activate deepanalytic
+pip install -r requirements.txt
+```
+Then create a `.env` file in the project root with `OPENAI_API_KEY`,
+`PINECONE_API_KEY`, `COHERE_API_KEY`, and `PINECONE_INDEX_NAME` — see
+`config.py` for the complete list of settings and their defaults.
+
 ## Data
 
 ### Stanford Encyclopedia of Philosophy (SEP)
@@ -97,12 +158,11 @@ Full test set, answers, sources returned, and per-question scoring with
 notes are in `tests/eval_scored.csv`. Write-up: [Building a RAG System
 That Knows What Section It's In (Part 1)](#) — link once published.
 
-**AI-assist disclosure for this evaluation:** Claude Opus 5 drafted the 
-article selection, the questions, the expected-key-points rubric, and the
+**AI-assist disclosure for this evaluation:** Claude drafted the article
+selection, the questions, the expected-key-points rubric, and the
 automation script (`run_eval.py`) that ran all 40 tests, and did the
 first scoring pass. A second, independent human scoring pass is
-recorded in the same file's `Your_*` columns -- those are filled by
-me.
+recorded in the same file's `Your_*` columns.
 
 ## Roadmap
 
@@ -110,5 +170,5 @@ me.
 - FastAPI service wrapping `rag_pipeline.py`
 - Investigate the reranker's Completeness gap found in evaluation above,
   before treating reranking as a strict improvement over naive retrieval
-- Deployment (AWS)
+- Deployment (Azure)
 - Open-source model option alongside the OpenAI-backed pipeline
