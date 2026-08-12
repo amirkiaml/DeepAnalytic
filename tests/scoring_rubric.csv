@@ -1,0 +1,23 @@
+Dimension,Score,Meaning
+Accuracy,5,"Every claim traceable to the source; no hedging needed, no embellishment"
+Accuracy,4,"Correct in substance; maybe one detail slightly imprecise or oversimplified"
+Accuracy,3,"Mostly correct but missing an important nuance or getting one sub-claim wrong"
+Accuracy,2,"Partially correct but contains at least one clear factual error or invented detail"
+Accuracy,1,"Substantially wrong, contradicts the source, or is a hallucination"
+Source Match,5,"Correct article, correct section (matches Section_Expected or a clearly adjacent sub-section)"
+Source Match,4,"Correct article, section slightly off (e.g. pulled the parent section instead of the sub-section)"
+Source Match,3,"Correct article, but section is generic/wrong within it"
+Source Match,2,"Wrong article, but topically adjacent (the kind of 'reasonable near-miss' naive retrieval produces)"
+Source Match,1,"Wrong article, unrelated topic -- a genuine retrieval failure"
+Completeness,5,"Hits all expected key points from the template, in appropriate depth"
+Completeness,4,"Hits most key points; one omitted or underdeveloped"
+Completeness,3,"Captures the general idea but misses at least one substantive key point"
+Completeness,2,"Vague or surface-level; reads like it's gesturing at the topic without engaging it"
+Completeness,1,"Doesn't actually answer the question, or answer is empty/near-empty"
+
+Scoring principles (not row-scored, reference only):
+- Score against the pre-written Expected_Key_Points column, not against vibes. Those were written before seeing any answers -- that is what makes this a real test rather than post-hoc rationalization.
+- Accuracy and Completeness are independent. A short accurate answer can be incomplete. A long complete answer can be subtly wrong. Do not let one dimension bleed into another.
+- Trap/cross-article questions (Question_Type = trap or stress-test) score on a different axis: a low-confidence or explicitly uncertain answer to an unanswerable premise is CORRECT behavior, not a failure. Score 5 = correctly flagged as absent/uncertain or correctly found real cross-referenced content; 1 = confidently fabricated an answer. Do not average these into the main Accuracy/Completeness means -- report them separately.
+- Two independent raters (Claude_* and Your_*) is a real methodological choice, not busywork -- basic inter-rater reliability practice, even done informally. If scores diverge by more than ~1 point on a given cell, that is worth flagging as a genuinely ambiguous case rather than silently averaging it away.
+- Chunks_Consulted lets you check retrieval quality directly against the generated answer -- if Completeness is low, check whether the right chunk was even retrieved (a retrieval failure) versus retrieved-but-not-used-well (a generation failure). These require different fixes.
