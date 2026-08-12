@@ -87,7 +87,7 @@ Both point to the same underlying pattern: a retrieved chunk can mention or pres
 
 Full test set, retrieved chunk text, and scoring with notes are in `tests/eval_scored.xlsx`. Write-up: [Building a RAG System That Knows What Section It's In (Part 1)](#) -- link once published.
 
-**Scoring and AI-assist disclosure:** Claude drafted the article selection, questions, expected-key-points rubric, and the automation script, and did the first scoring pass. Amir did an independent second scoring pass with his own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text -- both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where Amir's score was more accurate than Claude's first pass.
+**Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, questions, and expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
 ## Roadmap
 
