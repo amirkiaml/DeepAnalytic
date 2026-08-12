@@ -46,3 +46,11 @@ class VectorDB:
         self.index_name = index_name
         self.index = self.pc.Index(index_name)
         return self.index
+
+    def delete_index(self, index_name: str):
+        existing = [idx["name"] for idx in self.list_indexes()]
+        if index_name in existing:
+            self.pc.delete_index(index_name)
+            print(f"Deleted index '{index_name}'.")
+        else:
+            print(f"Index '{index_name}' does not exist — nothing to delete.")

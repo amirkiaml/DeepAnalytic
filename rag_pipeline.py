@@ -61,7 +61,12 @@ class RerankRAG:
         response = self.llm.invoke(prompt)
         return {
             "answer": response.content,
-            "sources": [d.metadata for d in docs],
+            # PineconeVectorStore pulls "text" out of metadata and into
+            # page_content when building the Document, so it's no longer
+            # present in d.metadata by this point. Re-attach it explicitly
+            # so downstream consumers (like run_eval.py's chunk logging)
+            # can see the actual retrieved text, not just title/section.
+            "sources": [{**d.metadata, "text": d.page_content} for d in docs],
         }
 
     def query_naive(self, question: str, k: int = None) -> dict:

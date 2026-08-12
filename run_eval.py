@@ -37,6 +37,27 @@ def format_sources(sources: list) -> str:
     return "; ".join(parts)
 
 
+def format_chunks(sources: list, max_chars: int = 400) -> str:
+    """
+    Log the actual chunk text that was retrieved/reranked and handed to
+    the LLM as context — not just which article/section it came from.
+    This is what makes an eval genuinely auditable: you can see exactly
+    what the model saw, not just infer it from the article title.
+
+    Each chunk is truncated to max_chars to keep the CSV readable; the
+    full untruncated text is still in Pinecone if you need to go deeper
+    on a specific row.
+    """
+    blocks = []
+    for i, s in enumerate(sources, 1):
+        title = s.get("title", "unknown")
+        section = s.get("section", "")
+        text = s.get("text", "")
+        snippet = text[:max_chars] + ("..." if len(text) > max_chars else "")
+        blocks.append(f"[{i}] {title} | {section}\n{snippet}")
+    return "\n---\n".join(blocks)
+
+
 def main():
     print("Loading RAG pipeline...")
     rag = RerankRAG()
@@ -67,10 +88,12 @@ def main():
 
             row["Answer"] = result["answer"]
             row["Sources_Returned"] = format_sources(result["sources"])
+            row["Chunks_Consulted"] = format_chunks(result["sources"])
 
         except Exception as e:
             row["Answer"] = f"ERROR: {e}"
             row["Sources_Returned"] = ""
+            row["Chunks_Consulted"] = ""
             print(f"    ERROR on this row: {e}")
 
         # Small delay to stay comfortably under rate limits across
