@@ -85,7 +85,13 @@ Reranking was flat-to-worse across the board, with two fully reproducible failur
 
 Both point to the same underlying pattern: a retrieved chunk can mention or presuppose content it doesn't itself contain, with no mechanism in the pipeline to notice and follow that gap. Full writeup in `notebooks/chunking_conclusions.md`.
 
-Full test set, retrieved chunk text, and scoring with notes are in `tests/eval_scored.xlsx`. Write-up: [Building a RAG System That Knows What Section It's In (Part 1)](#) -- link once published.
+Full test set, retrieved chunk text, and scoring with notes are in `tests/eval_scored.xlsx`. 
+<h4>Write-ups</h4>
+<ul style="margin: 0 0 20px; padding-left: 18px; line-height: 1.9;">
+<li><a href="https://vmachines.substack.com/p/building-a-rag-system-that-knows?utm_source=activity_item" target="_blank" rel="noopener">Building a RAG System That Knows What Section It's In</a> </li>
+<li><a href="#" target="_blank" rel="noopener">Five Chunking Strategies, No Winner, One Real Finding</a> — coming soon</li>
+            <li><a href="#" target="_blank" rel="noopener">Chunks That Mention vs. Chunks That Explain</a> — coming soon</li>
+</ul>
 
 **Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, questions, and expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
