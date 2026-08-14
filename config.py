@@ -26,6 +26,15 @@ class Settings:
     RERANK_MODEL: str = os.getenv("RERANK_MODEL", "rerank-english-v3.0")
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.0"))
 
+    # Decomposition (query-generation) model, deliberately separate from
+    # LLM_MODEL above. Splitting a question into sub-questions is a much
+    # simpler task than actually answering one grounded in retrieved
+    # context, so it doesn't need the same model doing final generation —
+    # a smaller/cheaper model is a reasonable default here, and this stays
+    # a distinct setting so the two can be tuned independently as pricing
+    # or quality needs change.
+    DECOMPOSITION_MODEL: str = os.getenv("DECOMPOSITION_MODEL", "gpt-4o-mini")
+
     # --- Retrieval params ---
     RETRIEVAL_K: int = int(os.getenv("RETRIEVAL_K", "10"))
     RERANK_TOP_N: int = int(os.getenv("RERANK_TOP_N", "5"))
