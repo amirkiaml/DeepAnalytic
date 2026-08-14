@@ -6,6 +6,7 @@ A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, bu
 
 - **`ingest.py`** -- indexing pipeline: loads the SEP corpus, splits each article into sections using its Table of Contents, chunks within section boundaries, embeds with OpenAI, upserts to Pinecone.
 - **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path for baseline comparison.
+- **`multiquery.py`** -- topic-first, schema-enforced question decomposition for composite questions, used by `rag_pipeline.py`'s `query_multi()` and `query_multi_concat()`.
 - **`section_parser.py`** -- TOC-aware chunking logic, with a regex fallback and per-article parsing-method logging.
 - **`chunker.py`**, **`embeddings.py`**, **`vectorstore.py`** -- supporting modules for text splitting, embedding config, and Pinecone index management.
 - **`chat.py`** -- terminal chat interface for querying the indexed corpus.
@@ -13,36 +14,19 @@ A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, bu
 - **`run_eval.py`** -- automation script that runs the systematic eval set through naive and reranked modes and logs results; see `tests/` and Evaluation below.
 - **`config.py`** -- centralized, environment-driven settings. No secrets in code.
 - **`tests/`** -- eval question set, raw results, scoring, and rubric (`eval_systematic.csv`, `eval_systematic_results.csv`, `eval_scored.xlsx`, `scoring_rubric.csv`).
-- **`notebooks/`** -- original research notebooks this project grew out of, plus `9_Chunking_Strategy_Comparison.ipynb` and `chunking_conclusions.md`, a later comparison of 5 chunking strategies with running findings notes.
+- **`notebooks/`** -- original research notebooks this project grew out of, plus `9_Chunking_Strategy_Comparison.ipynb`, `chunking_conclusions.md`, `5_Multiquery_Production.ipynb`, and `multiquery_dev_log.md` -- later comparisons and findings notes.
 
 ## Running it
 
 All commands assume the `deepanalytic` conda environment is active and a `.env` file is present (see `config.py` for required keys).
 
 ```
-python ingest.py
+python ingest.py          # build the Pinecone index (TEST_MODE/TEST_ROWS control full-corpus vs. slice)
+python chat.py             # interactive terminal chat, naive or rerank mode
+python check_chunks.py     # show raw retrieved chunks for a hardcoded query, before reranking
+python rag_pipeline.py     # single hardcoded smoke-test query against RerankRAG
+python run_eval.py         # run the eval set through both modes, logs to tests/eval_systematic_results.csv (real API calls)
 ```
-Builds the Pinecone index. `TEST_MODE`/`TEST_ROWS` at the top control full-corpus vs. small-slice runs.
-
-```
-python chat.py
-```
-Interactive terminal chat against the indexed corpus, naive or rerank mode.
-
-```
-python check_chunks.py
-```
-Shows raw retrieved chunks for a hardcoded query/article pair before reranking.
-
-```
-python rag_pipeline.py
-```
-Single hardcoded smoke-test query against `RerankRAG`.
-
-```
-python run_eval.py
-```
-Runs the eval set in `tests/eval_systematic.csv` through both modes, logs to `tests/eval_systematic_results.csv`. Makes real API calls.
 
 ## Environment setup
 
@@ -85,15 +69,15 @@ Reranking was flat-to-worse across the board, with two fully reproducible failur
 
 Both point to the same underlying pattern: a retrieved chunk can mention or presuppose content it doesn't itself contain, with no mechanism in the pipeline to notice and follow that gap. Full writeup in `notebooks/chunking_conclusions.md`.
 
-Full test set, answers, sources returned, and per-question scoring with
-notes are in `tests/eval_scored.csv`. Write-up: [Building a RAG System
-That Knows What Section It's In (Part 1)](#) — link once published.
+Full test set, answers, retrieved chunk text, and per-question scoring with notes are in `tests/eval_scored.xlsx`.
 
-**AI-assist disclosure for this evaluation:** Claude drafted the article
-selection, the questions, the expected-key-points rubric, and the
-automation script (`run_eval.py`) that ran all 40 tests, and did the
-first scoring pass. A second, independent human scoring pass is
-recorded in the same file's `Your_*` columns.
+**Write-ups**
+- [Building a RAG System That Knows What Section It's In (Part 1)](https://vmachines.substack.com/p/building-a-rag-system-that-knows)
+- Five Chunking Strategies, No Winner, One Real Finding (Part 2) -- coming soon
+- Chunks That Mention vs. Chunks That Explain (Part 3) -- coming soon
+- From Multiquery to a Referee (Part 4) -- coming soon
+
+**Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, the questions, and the expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
 ## Roadmap
 
