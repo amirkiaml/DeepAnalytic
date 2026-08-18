@@ -1,11 +1,11 @@
 # DeepAnalytic
 
-A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, built on a custom-scraped philosophy corpus. Started as a research project on applying LLMs to analytic philosophy texts; current focus is a section-aware RAG pipeline with reranking and a working query interface.
+A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, built on a custom-scraped philosophy corpus. Started as a research project on applying LLMs to analytic philosophy texts; the project is now pivoting toward a paper-referee tool (decompose a philosophy paper into individual claims, check each against SEP, report supported/contradicted/unaddressed) as the primary product, with the RAG chatbot becoming a companion feature for discussing the resulting feedback.
 
 ## What's here
 
 - **`ingest.py`** -- indexing pipeline: loads the SEP corpus, splits each article into sections using its Table of Contents, chunks within section boundaries, embeds with OpenAI, upserts to Pinecone.
-- **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path for baseline comparison.
+- **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path, plus `query_multi()` and `query_multi_concat()` for composite-question decomposition.
 - **`multiquery.py`** -- topic-first, schema-enforced question decomposition for composite questions, used by `rag_pipeline.py`'s `query_multi()` and `query_multi_concat()`.
 - **`section_parser.py`** -- TOC-aware chunking logic, with a regex fallback and per-article parsing-method logging.
 - **`chunker.py`**, **`embeddings.py`**, **`vectorstore.py`** -- supporting modules for text splitting, embedding config, and Pinecone index management.
@@ -14,7 +14,7 @@ A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, bu
 - **`run_eval.py`** -- automation script that runs the systematic eval set through naive and reranked modes and logs results; see `tests/` and Evaluation below.
 - **`config.py`** -- centralized, environment-driven settings. No secrets in code.
 - **`tests/`** -- eval question set, raw results, scoring, and rubric (`eval_systematic.csv`, `eval_systematic_results.csv`, `eval_scored.xlsx`, `scoring_rubric.csv`).
-- **`notebooks/`** -- original research notebooks this project grew out of, plus `9_Chunking_Strategy_Comparison.ipynb`, `chunking_conclusions.md`, `5_Multiquery_Production.ipynb`, and `multiquery_dev_log.md` -- later comparisons and findings notes.
+- **`notebooks/`** -- original research notebooks this project grew out of, plus `9_Chunking_Strategy_Comparison.ipynb`, `chunking_conclusions.md`, `5_Multiquery_Production.ipynb`, `multiquery_dev_log.md`, `10_Oruka_Retrieval_Fix.ipynb`, and `oruka_retrieval_debug_log.md` -- later comparisons, findings notes, and a specific retrieval-bug diagnosis.
 
 ## Running it
 
@@ -76,14 +76,29 @@ Full test set, answers, retrieved chunk text, and per-question scoring with note
 - Five Chunking Strategies, No Winner, One Real Finding (Part 2) -- coming soon
 - Chunks That Mention vs. Chunks That Explain (Part 3) -- coming soon
 - From Multiquery to a Referee (Part 4) -- coming soon
+- A Buried Answer, Two Wrong Guesses, and a Fix That Isn't Live Yet (Part 5) -- coming soon
 
 **Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, the questions, and the expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
+## Known open issues
+
+- **Oruka retrieval bug** -- a specific question about three claims a philosopher named Oruka set out to counter consistently retrieves a wrong-but-adjacent section instead of the correct one. Diagnosed in detail: the correct chunk ranks 22nd by pure vector similarity, due to content dilution plus crowding from thematically-adjacent chunks in other articles. A lexical phrase-overlap fix (TF-IDF blended with vector similarity) was tested and moved the correct chunk to rank 8 with zero regression on two control questions -- but this fix is **not yet wired into `rag_pipeline.py`**, it exists only in `notebooks/10_Oruka_Retrieval_Fix.ipynb`. Full diagnosis and results in `notebooks/oruka_retrieval_debug_log.md`.
+- **Multiquery reranking collapse at scale** -- when a question decomposes into a large number of subqueries (tested at 18), the reranked path of `query_multi()` fails completely and returns no answer, despite having correctly-targeted retrieval behind it. The non-reranked `query_multi_concat()` handles the same case correctly. Found during testing, not yet diagnosed. Logged in `notebooks/multiquery_dev_log.md`.
+
 ## Roadmap
+
+Current priority, given the pivot toward a referee tool:
+
+- Objection-and-response checking: retrieve documented SEP objections to a paper's thesis and check whether the paper addresses them.
+- Argument reconstruction: extract a paper's premises and conclusion into a structured form, enabling per-premise checking and basic validity testing.
+- Resolve the two known open issues above before building further on top of the current retrieval/multiquery layer.
+- User-uploadable documents on top of SEP, so a draft can be checked against SEP plus a philosopher's own citation list, not just the fixed encyclopedia.
+
+Further out:
 
 - Full-corpus indexing (currently tested on a 100-article slice)
 - FastAPI service wrapping `rag_pipeline.py`
-- Generation-layer work first: multiquery decomposition, a self-critique step, and a prompt-tweak test before further chunking/reranking tuning
 - Cross-reference/multi-hop retrieval: follow pointers inside a retrieved chunk to the section that actually explains a concept
+- A self-critique step for internal consistency checking within a paper, independent of any external corpus
 - Deployment (AWS)
 - Open-source model option alongside the OpenAI-backed pipeline
