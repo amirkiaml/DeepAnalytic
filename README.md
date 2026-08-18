@@ -76,11 +76,7 @@ Full test set, answers, retrieved chunk text, and per-question scoring with note
 - Five Chunking Strategies, No Winner, One Real Finding (Part 2) -- coming soon
 - Chunks That Mention vs. Chunks That Explain (Part 3) -- coming soon
 - From Multiquery to a Referee (Part 4) -- coming soon
-<<<<<<< HEAD
 - A Buried Answer, Two Wrong Guesses, and a Fix That Isn't Live Yet (Part 5) -- coming soon
-=======
-- A Buried Answer, Two Wrong Guesses, and a Fix (Part 5) -- coming soon
->>>>>>> dc9b14a34d629ef2d7eaca1711f733575193539d
 
 **Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, the questions, and the expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
