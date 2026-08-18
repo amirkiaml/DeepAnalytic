@@ -73,7 +73,7 @@ Full test set, answers, retrieved chunk text, and per-question scoring with note
 
 **Write-ups**
 - [Building a RAG System That Knows What Section It's In (Part 1)](https://vmachines.substack.com/p/building-a-rag-system-that-knows)
-- Five Chunking Strategies, No Winner, One Real Finding (Part 2) -- coming soon
+- [Five Ways to Cut Up a Philosophy Article (Part 2)] (https://vmachines.substack.com/p/five-ways-to-cut-up-a-philosophy)
 - Chunks That Mention vs. Chunks That Explain (Part 3) -- coming soon
 - From Multiquery to a Referee (Part 4) -- coming soon
 - A Buried Answer, Two Wrong Guesses, and a Fix That Isn't Live Yet (Part 5) -- coming soon
