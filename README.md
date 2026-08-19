@@ -2,9 +2,11 @@
 
 A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, built on a custom-scraped philosophy corpus. Started as a research project on applying LLMs to analytic philosophy texts; the project is now pivoting toward a paper-referee tool (decompose a philosophy paper into individual claims, check each against SEP, report supported/contradicted/unaddressed) as the primary product, with the RAG chatbot becoming a companion feature for discussing the resulting feedback.
 
+The full SEP corpus is indexed: 111,048 chunks across 1,803 articles.
+
 ## What's here
 
-- **`ingest.py`** -- indexing pipeline: loads the SEP corpus, splits each article into sections using its Table of Contents, chunks within section boundaries, embeds with OpenAI, upserts to Pinecone.
+- **`ingest.py`** -- indexing pipeline: loads the SEP corpus, splits each article into sections using its Table of Contents, chunks within section boundaries, embeds with OpenAI, upserts to Pinecone. Supports namespaces, retry with backoff, and per-article error handling.
 - **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path, plus `query_multi()` and `query_multi_concat()` for composite-question decomposition.
 - **`multiquery.py`** -- topic-first, schema-enforced question decomposition for composite questions, used by `rag_pipeline.py`'s `query_multi()` and `query_multi_concat()`.
 - **`section_parser.py`** -- TOC-aware chunking logic, with a regex fallback and per-article parsing-method logging.
@@ -14,14 +16,14 @@ A retrieval-augmented QA system over the Stanford Encyclopedia of Philosophy, bu
 - **`run_eval.py`** -- automation script that runs the systematic eval set through naive and reranked modes and logs results; see `tests/` and Evaluation below.
 - **`config.py`** -- centralized, environment-driven settings. No secrets in code.
 - **`tests/`** -- eval question set, raw results, scoring, and rubric (`eval_systematic.csv`, `eval_systematic_results.csv`, `eval_scored.xlsx`, `scoring_rubric.csv`).
-- **`notebooks/`** -- original research notebooks this project grew out of, plus `9_Chunking_Strategy_Comparison.ipynb`, `chunking_conclusions.md`, `5_Multiquery_Production.ipynb`, `multiquery_dev_log.md`, `10_Oruka_Retrieval_Fix.ipynb`, and `oruka_retrieval_debug_log.md` -- later comparisons, findings notes, and a specific retrieval-bug diagnosis.
+- **`notebooks/`** -- original research notebooks this project grew out of, plus later experiments and their findings logs: `9_Chunking_Strategy_Comparison.ipynb` with `chunking_conclusions.md`, `5_Multiquery_Production.ipynb` with `multiquery_dev_log.md`, `10_Oruka_Retrieval_Fix.ipynb` with `oruka_retrieval_debug_log.md`, and `11_Corpus_Scaling_Recall.ipynb` with `scaling_and_pilot_strategy_log.md`.
 
 ## Running it
 
 All commands assume the `deepanalytic` conda environment is active and a `.env` file is present (see `config.py` for required keys).
 
 ```
-python ingest.py          # build the Pinecone index (TEST_MODE/TEST_ROWS control full-corpus vs. slice)
+python ingest.py          # build the Pinecone index (TEST_MODE/TEST_ROWS/NAMESPACE control scope and target)
 python chat.py             # interactive terminal chat, naive or rerank mode
 python check_chunks.py     # show raw retrieved chunks for a hardcoded query, before reranking
 python rag_pipeline.py     # single hardcoded smoke-test query against RerankRAG
@@ -49,13 +51,17 @@ Create a `.env` file with `OPENAI_API_KEY`, `PINECONE_API_KEY`, `COHERE_API_KEY`
 
 Standard RAG chunks by fixed token windows regardless of content structure, which can straddle two unrelated subsections in one chunk. This pipeline instead uses each SEP article's own Table of Contents to chunk within real section boundaries, attaching the section title as metadata.
 
-On a 100-article test, TOC-based parsing succeeded fully on 95% of articles, partially on the rest, with no outright failures.
+TOC-based parsing succeeded fully on 97.5% of the full 1,803-article corpus, partially on 2.3%, with one article failing outright. Parse quality improved with scale rather than degrading: 95% clean at 100 articles, 96.3% at 300, 97.5% at 1,803.
 
 **Update:** a later, dedicated comparison against four alternative chunking strategies found section-aware chunking does *not* clearly outperform the two simplest alternatives on this corpus -- natural paragraph breaks already track topic breaks closely enough that a structure-blind splitter gets a similar result. It remains the default, but the honest finding is that chunking strategy matters less than expected, and the real bottleneck sits downstream (reranking's narrowing step, and generation's willingness to synthesize). Full comparison and findings in `notebooks/chunking_conclusions.md`.
 
+One structural limitation worth naming: section parsing splits only at top-level headings, so subsection structure is invisible to retrieval. A chunk knows it came from "Arguments for and Objections to Animalism" but has no representation of section 3.1 within it. This means within-article retrieval failures cannot currently be measured automatically, only diagnosed by hand.
+
 ## Evaluation
 
-A systematic naive-vs-reranked comparison, 5 articles chosen for known interesting cases (two confirmed rerank failures, one accuracy-drift case, one cross-article retrieval case, one clean baseline), 2 questions each, scored on Accuracy, Source Match, and Completeness.
+### Naive vs. reranked retrieval
+
+A systematic comparison across 5 articles chosen for known interesting cases, 2 questions each, scored on Accuracy, Source Match, and Completeness.
 
 | | Accuracy | Source Match | Completeness | Overall |
 |---|---|---|---|---|
@@ -71,34 +77,57 @@ Both point to the same underlying pattern: a retrieved chunk can mention or pres
 
 Full test set, answers, retrieved chunk text, and per-question scoring with notes are in `tests/eval_scored.xlsx`.
 
+### Corpus scaling: 100 articles to the full corpus
+
+The published literature predicted degradation. Xiang et al. measured vector RAG accuracy on complex reasoning falling 26% relative across a twentyfold expansion, attributed to retrieval "capturing high-similarity but irrelevant noise as the search space expands." This expansion was 19.5x, a nearly identical scale factor.
+
+Retrieval recall held completely. Recall@5, @10, and @20 were unchanged, no question dropped out of the top 10, and nothing fell out of the top 50.
+
+An off-article metric appeared to show crowding, rising 47%. That reading turned out to be wrong: the metric counts chunks from *other* articles, not *wrong* ones, and the 100-article baseline was an alphabetical slice that excluded most relevant material by construction. Head-query testing on generic concepts settled it. Four of five returned the entry actually named after the concept on the full corpus, where the 100-article corpus had returned articles merely mentioning it. Asked about supervenience, the small corpus returned nine chunks of *Anomalous Monism*; the full corpus returned six of *Supervenience*. Chunk-level inspection resolved the two ambiguous cases the same way.
+
+Paraphrase testing on the weakest question set found rank moving at most one position under expansion, and rewording the question moving rank more than expanding the corpus did.
+
+Full method, results, and the two measurement bugs found along the way are in `notebooks/scaling_and_pilot_strategy_log.md`.
+
 **Write-ups**
 - [Building a RAG System That Knows What Section It's In (Part 1)](https://vmachines.substack.com/p/building-a-rag-system-that-knows)
-- [Five Ways to Cut Up a Philosophy Article (Part 2)] (https://vmachines.substack.com/p/five-ways-to-cut-up-a-philosophy)
+- [Five Ways to Cut Up a Philosophy Article (Part 2)](https://vmachines.substack.com/p/five-ways-to-cut-up-a-philosophy)
 - Chunks That Mention vs. Chunks That Explain (Part 3) -- coming soon
 - From Multiquery to a Referee (Part 4) -- coming soon
 - A Buried Answer, Two Wrong Guesses, and a Fix That Isn't Live Yet (Part 5) -- coming soon
+- I Expected Scaling to Break My Retrieval. It Fixed It. (Part 6) -- coming soon
 
 **Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, the questions, and the expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
 ## Known open issues
 
 - **Oruka retrieval bug** -- a specific question about three claims a philosopher named Oruka set out to counter consistently retrieves a wrong-but-adjacent section instead of the correct one. Diagnosed in detail: the correct chunk ranks 22nd by pure vector similarity, due to content dilution plus crowding from thematically-adjacent chunks in other articles. A lexical phrase-overlap fix (TF-IDF blended with vector similarity) was tested and moved the correct chunk to rank 8 with zero regression on two control questions -- but this fix is **not yet wired into `rag_pipeline.py`**, it exists only in `notebooks/10_Oruka_Retrieval_Fix.ipynb`. Full diagnosis and results in `notebooks/oruka_retrieval_debug_log.md`.
-- **Multiquery reranking collapse at scale** -- when a question decomposes into a large number of subqueries (tested at 18), the reranked path of `query_multi()` fails completely and returns no answer, despite having correctly-targeted retrieval behind it. The non-reranked `query_multi_concat()` handles the same case correctly. Found during testing, not yet diagnosed. Logged in `notebooks/multiquery_dev_log.md`.
+- **Multiquery reranking collapse at scale** -- when a question decomposes into a large number of subqueries (tested at 18), the reranked path of `query_multi()` fails completely and returns no answer, despite having correctly-targeted retrieval behind it. The non-reranked `query_multi_concat()` handles the same case correctly. Found during testing, not yet diagnosed. Logged in `notebooks/multiquery_dev_log.md`. Largely moot if reranking stops being the default path.
+- **Subsection structure is not indexed** -- section parsing stops at top-level headings, so pointers like "as we saw in section 1.2" have nothing to resolve against, and within-article retrieval failures cannot be measured automatically. Prerequisite for the cross-reference work below.
 
 ## Roadmap
+
+Immediately before the pilot:
+
+- Flip reranking defaults in `rag_pipeline.py` (`use_rerank=False`, `query_multi_concat()` as primary), given three separate tests now showing reranking flat-to-harmful.
+- Streamlit app: keys in Streamlit secrets, usage cap, one pipeline with no mode switching, plain-language intro.
+- Ship to volunteer philosopher testers and collect qualitative feedback on answer quality, source correctness, and whether they would actually use it.
 
 Current priority, given the pivot toward a referee tool:
 
 - Objection-and-response checking: retrieve documented SEP objections to a paper's thesis and check whether the paper addresses them.
 - Argument reconstruction: extract a paper's premises and conclusion into a structured form, enabling per-premise checking and basic validity testing.
-- Resolve the two known open issues above before building further on top of the current retrieval/multiquery layer.
 - User-uploadable documents on top of SEP, so a draft can be checked against SEP plus a philosopher's own citation list, not just the fixed encyclopedia.
 
 Further out:
 
-- Full-corpus indexing (currently tested on a 100-article slice)
 - FastAPI service wrapping `rag_pipeline.py`
-- Cross-reference/multi-hop retrieval: follow pointers inside a retrieved chunk to the section that actually explains a concept
+- Index subsection headings, enabling cross-reference/multi-hop retrieval: follow pointers inside a retrieved chunk to the section that actually explains a concept
 - A self-critique step for internal consistency checking within a paper, independent of any external corpus
+- Conversational memory (multi-turn follow-ups), tried early and pulled for simplicity while the core pipeline was unstable
 - Deployment (AWS)
 - Open-source model option alongside the OpenAI-backed pipeline
+
+Possible research direction, parked:
+
+- The corpus-scaling literature treats corpus *size* as the independent variable while corpus *composition* goes unisolated. Adding canonically relevant documents and adding merely adjacent ones are different operations that both count as "scaling." This project's own result fits the composition hypothesis. Testable by expanding one base corpus two ways to the same final size. Would need a second corpus, a metric catching within-article failures, and a substantially larger question set. Reasoning in `notebooks/scaling_and_pilot_strategy_log.md`.
