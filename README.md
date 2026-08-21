@@ -6,8 +6,9 @@ The full SEP corpus is indexed: 111,048 chunks across 1,803 articles.
 
 ## What's here
 
+- **`app.py`** -- Streamlit pilot interface. Per-tester password auth, session query cap, short app-layer conversation memory, sources grouped by sub-question, and anonymised interaction and feedback logging to Google Sheets.
 - **`ingest.py`** -- indexing pipeline: loads the SEP corpus, splits each article into sections using its Table of Contents, chunks within section boundaries, embeds with OpenAI, upserts to Pinecone. Supports namespaces, retry with backoff, and per-article error handling.
-- **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path, plus `query_multi()` and `query_multi_concat()` for composite-question decomposition.
+- **`rag_pipeline.py`** -- query-time pipeline: retrieve -> rerank (Cohere) -> generate (OpenAI). Includes a naive-retrieval-only path, plus `query_multi()` and `query_multi_concat()` for composite-question decomposition. Answers attribute claims to the entry they came from rather than referring to an anonymous "context".
 - **`multiquery.py`** -- topic-first, schema-enforced question decomposition for composite questions, used by `rag_pipeline.py`'s `query_multi()` and `query_multi_concat()`.
 - **`section_parser.py`** -- TOC-aware chunking logic, with a regex fallback and per-article parsing-method logging.
 - **`chunker.py`**, **`embeddings.py`**, **`vectorstore.py`** -- supporting modules for text splitting, embedding config, and Pinecone index management.
@@ -15,6 +16,7 @@ The full SEP corpus is indexed: 111,048 chunks across 1,803 articles.
 - **`check_chunks.py`** -- diagnostic tool for inspecting retrieved chunks for a given query.
 - **`run_eval.py`** -- automation script that runs the systematic eval set through naive and reranked modes and logs results; see `tests/` and Evaluation below.
 - **`config.py`** -- centralized, environment-driven settings. No secrets in code.
+- **`secrets_template.toml`** -- placeholder template for Streamlit secrets, documenting every setting the app expects and the three Google Sheets tabs it writes to.
 - **`tests/`** -- eval question set, raw results, scoring, and rubric (`eval_systematic.csv`, `eval_systematic_results.csv`, `eval_scored.xlsx`, `scoring_rubric.csv`).
 - **`notebooks/`** -- original research notebooks this project grew out of, plus later experiments and their findings logs: `9_Chunking_Strategy_Comparison.ipynb` with `chunking_conclusions.md`, `5_Multiquery_Production.ipynb` with `multiquery_dev_log.md`, `10_Oruka_Retrieval_Fix.ipynb` with `oruka_retrieval_debug_log.md`, and `11_Corpus_Scaling_Recall.ipynb` with `scaling_and_pilot_strategy_log.md`.
 
@@ -23,10 +25,11 @@ The full SEP corpus is indexed: 111,048 chunks across 1,803 articles.
 All commands assume the `deepanalytic` conda environment is active and a `.env` file is present (see `config.py` for required keys).
 
 ```
-python ingest.py          # build the Pinecone index (TEST_MODE/TEST_ROWS/NAMESPACE control scope and target)
+streamlit run app.py       # pilot interface for testers
+python ingest.py           # build the Pinecone index (TEST_MODE/TEST_ROWS/NAMESPACE at the top of the file control scope and target namespace)
 python chat.py             # interactive terminal chat, naive or rerank mode
 python check_chunks.py     # show raw retrieved chunks for a hardcoded query, before reranking
-python rag_pipeline.py     # single hardcoded smoke-test query against RerankRAG
+python rag_pipeline.py     # single hardcoded smoke-test query, useful after changing the pipeline
 python run_eval.py         # run the eval set through both modes, logs to tests/eval_systematic_results.csv (real API calls)
 ```
 
@@ -99,18 +102,31 @@ Full method, results, and the two measurement bugs found along the way are in `n
 
 **Scoring methodology:** this follows standard current practice for RAG evaluation: LLM-assisted test-set generation, paired with LLM-as-judge scoring and human verification. Claude generated the article selection, the questions, and the expected-key-points rubric (a common synthetic-eval-set-generation pattern, e.g. RAGAS's testset generator does the same thing), and built the automation script and first-pass scoring. I did an independent second scoring pass with my own comments, spot-checking the highest-stakes rows directly against the retrieved chunk text. Both sets of scores and notes are recorded side by side in `tests/eval_scored.xlsx`, including at least one case where my score corrected Claude's first pass.
 
+## The pilot
+
+`app.py` is a Streamlit interface for a small group of invited philosophers. It serves `query_multi_concat()` with no mode switching, on the reasoning that testers should be judging whether answers are useful rather than evaluating the architecture.
+
+Sources appear under each answer, grouped by the sub-question that retrieved them rather than as a flat list, since the pipeline produces no global ranking across sub-questions and a flat list would imply one. Passages under 100 characters are hidden, which removes section headings that landed alone at a chunk boundary and would otherwise appear as cited sources.
+
+Conversation memory spans three turns and lives entirely in the app layer, leaving the pipeline stateless. Testers are told not to lean on it: self-contained questions retrieve better, and self-contained claims are the unit the referee tool will eventually work with.
+
+Interactions and feedback log anonymously to Google Sheets across three tabs joined on a generated interaction id: the interactions themselves, per-answer feedback with separate ratings for answer quality and source quality, and the full text of every retrieved passage for later analysis. Emails are hashed into short pseudonymous ids, so a tester's questions can be grouped without storing who they are alongside them.
+
+Cost is capped in two places: a hard budget limit on the API project, and a per-session query cap in the app so one tester can't exhaust it in a sitting and so exhaustion produces a clear message rather than raw errors.
+
 ## Known open issues
 
 - **Oruka retrieval bug** -- a specific question about three claims a philosopher named Oruka set out to counter consistently retrieves a wrong-but-adjacent section instead of the correct one. Diagnosed in detail: the correct chunk ranks 22nd by pure vector similarity, due to content dilution plus crowding from thematically-adjacent chunks in other articles. A lexical phrase-overlap fix (TF-IDF blended with vector similarity) was tested and moved the correct chunk to rank 8 with zero regression on two control questions -- but this fix is **not yet wired into `rag_pipeline.py`**, it exists only in `notebooks/10_Oruka_Retrieval_Fix.ipynb`. Full diagnosis and results in `notebooks/oruka_retrieval_debug_log.md`.
 - **Multiquery reranking collapse at scale** -- when a question decomposes into a large number of subqueries (tested at 18), the reranked path of `query_multi()` fails completely and returns no answer, despite having correctly-targeted retrieval behind it. The non-reranked `query_multi_concat()` handles the same case correctly. Found during testing, not yet diagnosed. Logged in `notebooks/multiquery_dev_log.md`. Largely moot if reranking stops being the default path.
+- **Refusal detection is a stopgap** -- when a question falls outside the corpus, vector search still returns its nearest neighbours, and displaying them alongside a refusal makes the interface look like it found something relevant and ignored it. The app currently detects refusals by matching phrasing in the answer and gating on answer length. This is brittle: it depends on wording the generation prompt encourages but doesn't guarantee, and it broke silently once already when the prompt changed. The principled fix is a similarity threshold, which needs scores surfaced through the pipeline via `similarity_search_with_score()`.
 - **Subsection structure is not indexed** -- section parsing stops at top-level headings, so pointers like "as we saw in section 1.2" have nothing to resolve against, and within-article retrieval failures cannot be measured automatically. Prerequisite for the cross-reference work below.
 
 ## Roadmap
 
 Immediately before the pilot:
 
-- Flip reranking defaults in `rag_pipeline.py` (`use_rerank=False`, `query_multi_concat()` as primary), given three separate tests now showing reranking flat-to-harmful.
-- Streamlit app: keys in Streamlit secrets, usage cap, one pipeline with no mode switching, plain-language intro.
+- Deploy `app.py` to Streamlit Community Cloud, with secrets in the dashboard rather than a local file.
+- Set up the Google Sheet and service account for logging, and generate per-tester passwords.
 - Ship to volunteer philosopher testers and collect qualitative feedback on answer quality, source correctness, and whether they would actually use it.
 
 Current priority, given the pivot toward a referee tool:
