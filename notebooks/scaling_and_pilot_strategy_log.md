@@ -342,3 +342,101 @@ Not harmful. Two nearly-identical retrievals waste an API call but do not degrad
 - `ingest.py`: namespace support, retry with exponential backoff, per-article error handling, end-of-run failure summary, and a corrected TOC-warning threshold that no longer fires on a single failed article.
 - `app.py`: new Streamlit pilot interface. Per-person password auth, 15-query session cap, three-turn app-layer memory, collapsible sources with excerpts and links, anonymised Google Sheets logging with a toggle.
 - `secrets_template.toml`: template for Streamlit secrets, covering API keys, namespace, logging config, and the per-tester password table.
+
+## Short-chunk noise: measured, not yet fixed
+
+Building the grouped source display made a pre-existing problem visible. A question about the meaning of life returned, among its sources, a passage from *Timon of Phlius* whose entire content was the section heading "1. Life". It had been there before the grouping change, hidden in a flat list; grouping by sub-question surfaced it because it was the only result the safety-net original question found that the cleaned-up reformulation hadn't.
+
+**Measured across a 1,000-chunk sample of the full corpus: 1.4% of chunks are under 100 characters**, which extrapolates to roughly 1,500 across the 111,048 total.
+
+Two distinct causes, worth separating. Most are heading-only chunks, for example "3. Space, Body, and Motion" or "7. Cartesian Cosmology and Astrophysics", produced when a section heading lands alone at a chunk boundary because the preceding chunk filled up just before it. These carry no information at all. A smaller number are genuine prose fragments that happen to be short, tail-ends of sections that didn't fill a final chunk. Less useless, but still thin on their own.
+
+**Impact is cosmetic rather than substantive.** The model receives these alongside real passages and appears to ignore them; in the case that surfaced this, three substantial passages from *The Meaning of Life* carried the answer. The cost is that a tester sees "1. Life" cited as a source and reasonably wonders whether the system is working.
+
+**Decision: filter at display time rather than at ingest, for now.** Dropping sources under 100 characters before rendering is one line in `app.py` and requires no re-indexing. The proper fix is a minimum-length filter in `ingest.py` before embedding, but that means re-indexing 111,048 chunks for a 1.4% problem, which is not worth doing before the pilot. Worth folding into the next full re-index whenever one happens for another reason.
+
+One implementation note: filtering `sources` requires filtering the parallel `source_origins` list in step, or the sub-question grouping falls out of alignment.
+
+**A related observation, not yet acted on.** This surfaced because the safety-net original question retrieved worse results than the model's cleaned-up reformulation. `generate_subqueries()` appends the user's original phrasing so retrieval never loses the direct wording, which is sound in general, but when the reformulation is a *correction* of a typo, the original is strictly worse and contributes noise. Worth revisiting whether the safety net should be skipped when the reformulation is close to the original, though it is low priority and the cost is one wasted retrieval call rather than a degraded answer.
+
+## Pilot app: four bugs found by using it
+
+The app went from working to demonstrably wrong in several ways within about an hour of actually asking it questions, which is worth recording because none of these would have surfaced from reading the code.
+
+**Memory was leaking into retrieval, and it was severe.** `build_contextual_question()` prepended the last three exchanges to the question before passing it to `query_multi_concat()`. That single string then went to *both* decomposition and retrieval. So asking "who is the president of the USA" after asking about the meaning of life produced a Pinecone query whose text was several hundred characters of prior conversation with the actual question at the end. The retrieved passages were about the meaning of life, because that is what dominated the query text. The display made it visible: the sub-question grouping showed a "Searched for:" heading containing the entire conversation history, which is what it had genuinely searched for.
+
+Fixed by splitting the two. `query_multi_concat()` now takes an optional `generation_question` separate from the question it searches with. The app passes the raw question to retrieval and the memory-laden version to generation. The pipeline stays stateless; all conversation memory remains in the app layer. The helper was renamed `build_generation_prompt()` to make its scope unambiguous.
+
+Worth noting this only became visible because sources are grouped by sub-question. In a flat list, the polluted query would have been invisible and the symptom would have looked like poor retrieval quality.
+
+**Short-chunk noise, measured and filtered at display.** A question about the meaning of life cited a passage from *Timon of Phlius* whose entire content was the section heading "1. Life". Sampling 1,000 chunks found 1.4% under 100 characters, extrapolating to roughly 1,500 across the corpus. Most are headings that landed alone at a chunk boundary; a few are genuine but very short prose fragments. Filtered at display time via `MIN_SOURCE_CHARS`, with `source_origins` filtered in step so the sub-question grouping stays aligned. Not fixed at ingest, since re-indexing 111,048 chunks for a 1.4% cosmetic problem isn't worth it before the pilot.
+
+**Refusal detection, added and then immediately narrowed.** Vector search always returns its nearest neighbours regardless of match quality, so a question the corpus can't answer still comes back with k results. Asking "who is Joe Johnson the poopy head" correctly returned "the context does not contain any information about..." while displaying four sources on Jevons, Anna Julia Cooper, and indexical semantics, which makes the interface look like it found something relevant and ignored it.
+
+Added `looks_like_refusal()` to skip source rendering when the answer asserts an absence of information. The first version was too broad: it included `"context does not contain"`, which matched not only real refusals but also partial answers of the form "the context does not contain the answer to X, but it does discuss Y". A question about Kit Fine's grounding theory hit exactly that case, and had its genuinely relevant sources hidden. Markers narrowed to phrasings that assert total absence only.
+
+This is explicitly a stopgap and is commented as such. It matches on wording the generation prompt encourages but does not guarantee, so differently-phrased refusals will slip through. The principled fix is a similarity threshold, which requires scores surfaced through the pipeline via `similarity_search_with_score()` rather than `similarity_search()`.
+
+**Source attribution in generated answers.** Answers referred to "the context", which is opaque to a reader and gives no route back to a source. Each passage now enters the prompt with a header naming its entry and section, and the prompt instructs the model to attribute claims by entry name.
+
+Entry titles only, not authors. The authors field in this corpus is a stringified list with embedded email addresses and newlines, for example `"['Francesco Berto --- fb96@st-andrews.ac.uk'\\n 'Daniel Nolan --- dnolan2@nd.edu']"`. Parsing that reliably is a small project of its own, and the linked entry carries authorship anyway.
+
+Two consequences to watch. Attribution instructions can make answers wordier, since every claim picks up a clause naming its source; if that gets repetitive the fix is attributing once per entry rather than once per claim. And the prompt now says "passages" rather than "context", so refusal phrasing will shift and the markers in `app.py` may need adjusting once real refusals are observed under the new wording.
+
+**Also fixed along the way:** `query_multi_concat()` wasn't returning `source_origins` on the empty-results path, which would have desynced the grouping if retrieval ever came back with nothing. Mid-length chunks were rendering their text twice, once as excerpt and once in the expander, since anything over 400 characters got both; now only chunks over 500 get an expander. And the "Read the full entry" links were rendering as raw markdown because `st.caption()` doesn't parse it.
+
+## What the transcripts showed working
+
+Worth recording alongside the bugs, since the failures are more legible than the successes.
+
+Refusals are honest and correctly scoped. Asked about the US president, the system said the corpus doesn't cover it rather than confabulating. Asked about Donald Trump, it reported only what SEP actually contains, that he appears as an example of a demagogue in *Structured Propositions* and in discussions of computational propaganda, and explicitly noted it could not confirm his role or position. For a corpus-restricted system that is exactly right.
+
+Decomposition is working on genuinely composite questions. "What is metaphysical grounding and how has Kit Fine contributed to it" split into two proper sub-questions, each retrieving appropriately: the grounding question pulled *Hyperintensionality*, *Counterfactuals*, and *Ontological Dependence*, while the Fine question pulled two passages from *Truthmakers* covering his argument that grounding does better work than truth-making. That is the mechanism doing what it was built for.
+
+## The pilot app: what shipping actually required
+
+The app went from working to demonstrably wrong in several ways within about an hour of asking it real questions, which is worth recording because none of it would have surfaced from reading the code.
+
+**Memory leaked into retrieval, and it was severe.** The helper that prepended recent conversation to a question passed that whole string to *both* decomposition and retrieval. So a question asked after an unrelated one produced a Pinecone query several hundred characters long, dominated by the earlier topic, with the actual question at the end. Retrieved passages were about the previous subject. The sub-question grouping made it visible, since the "Searched for" heading displayed the entire conversation history as the thing it had searched for.
+
+Fixed by giving `query_multi_concat()` an optional `generation_question` separate from what it searches with. Retrieval sees the raw question; generation sees the memory-laden version. The pipeline stays stateless and all conversation memory remains in the app layer.
+
+This only became visible because sources are grouped by sub-question. In a flat list the symptom would have looked like ordinary poor retrieval, and the wrong thing would have been chased.
+
+**Short-chunk noise, measured and filtered.** An answer cited a passage whose entire content was a section heading. Sampling 1,000 chunks found 1.4% under 100 characters, roughly 1,500 across the corpus, mostly headings that landed alone at a chunk boundary. Filtered at display via `MIN_SOURCE_CHARS`, with the parallel origins list filtered in step so grouping stays aligned. Not fixed at ingest, since re-indexing 111,048 chunks for a cosmetic 1.4% problem isn't worth it before a pilot.
+
+**Refusal detection took three attempts.** Vector search always returns its nearest neighbours regardless of match quality, so a question the corpus can't answer still comes back with k results, and displaying them alongside a refusal makes the interface look like it found something and ignored it.
+
+First attempt matched refusal phrases in the answer text. Too broad: it caught partial answers of the form "the passages don't contain the answer to X, but they do discuss Y", which have real sources worth showing. Markers narrowed to phrasings asserting total absence.
+
+Second attempt broke silently when the generation prompt changed from saying "context" to "passages". Refusals started coming back as "the passages provided do *not* contain..." rather than "does not", and the singular-verb markers stopped matching. Worth remembering that a prompt change can break this with no error surfacing.
+
+Third attempt added a length gate, after a multi-part question refused two parts, answered two others from real passages, and had all its sources suppressed because a refusal phrase appeared somewhere in a long answer. A genuine refusal is brief; anything longer has material behind it. Threshold started at 400 characters and was raised to 600, after a refusal landed at 396 — the better refusals explain what the corpus *does* contain, which runs past 400 easily.
+
+The whole mechanism is a stopgap and is commented as such. It matches on wording the prompt encourages but doesn't guarantee. The principled fix is a similarity threshold, which needs scores surfaced through the pipeline via `similarity_search_with_score()`.
+
+**Answers now attribute to source entries.** Passages enter the prompt with a header naming their entry and section, and the prompt asks the model to say "the entry on X says" rather than "the context". Entry titles only, not authors: the authors field in this corpus is a stringified list with embedded emails and newlines, and parsing it reliably isn't worth the effort when the linked entry carries authorship anyway.
+
+**A namespace bug found while wiring the app.** `rag_pipeline.py` connected to the index without specifying a namespace, so it queried the default namespace holding the original 100-article slice rather than the full corpus. This affected everything routed through `RerankRAG`, not just the app. Every tool would have run without error and returned plausible answers from the wrong corpus. Fixed by adding `PINECONE_NAMESPACE` to config and passing it through. The corpus-scaling comparison was unaffected, since it queries Pinecone directly.
+
+## Logging design
+
+Three sheets, joined on a generated `interaction_id`.
+
+Interactions carry timestamp, pseudonymous user id, question, answer, a compact source summary, and the generated sub-questions. Feedback is a separate tab because it arrives after the interaction row is written, and updating rows in place would mean tracking row numbers, which is fragile. Chunk text is a third tab because five passages of several hundred characters each would make the interactions tab unreadable in a browser, and that tab is the one worth being able to skim.
+
+Emails are hashed with a salt into short pseudonymous ids, so one tester's questions can be grouped without storing who they are alongside their interactions. Logging is toggleable via a secret without redeploying, and every failure is caught so it can never break a tester's session.
+
+**Feedback is per-answer rather than per-session**, because the useful question is which *specific* answers were good. A session-level form loses that link, and by the end people have forgotten which answer they meant. Two ratings rather than one: an answer can read well while citing the wrong passages, or cite exactly the right passages and still miss the point, and those need different fixes.
+
+## Design decisions worth recording
+
+*Which pipeline.* `query_multi_concat()`, with no mode switching exposed. Reranking isn't disabled anywhere; the app calls a method that has no rerank path. That was the minimal option, leaving `query_multi()`'s defaults intact so existing eval comparisons stay reproducible.
+
+*Memory.* Three turns, app layer only. Testers are told not to lean on it, both because self-contained questions retrieve better and because self-contained claims are the unit the referee tool will operate on, so the habit is useful beyond this pilot.
+
+*Cost control, two layers.* A hard budget cap on the OpenAI project, plus a 15-query session limit in the app. The budget cap alone protects the wallet but produces raw API errors mid-session once exhausted; the session cap gives a clear message and stops one tester consuming the whole budget in an afternoon.
+
+*Access.* Email plus per-person password, so access can be revoked individually.
+
+**Still outstanding before testers:** deploy to Streamlit Cloud, create the Sheet and service account, generate passwords, clear test rows from the Sheet, and resolve the SEP terms question for an app serving retrieved passages to people other than me.
