@@ -36,7 +36,14 @@ class RerankRAG:
         # index already exists (built by ingest.py) — it does not create one.
         vector_db = VectorDB()
         index = vector_db.connect_to_index(settings.PINECONE_INDEX_NAME)
-        self.vectorstore = PineconeVectorStore(index=index, embedding=self.embed)
+        # namespace matters: without it, queries hit the default namespace,
+        # which still holds the original 100-article test slice rather than
+        # the full corpus.
+        self.vectorstore = PineconeVectorStore(
+            index=index,
+            embedding=self.embed,
+            namespace=settings.PINECONE_NAMESPACE or None,
+        )
 
         self.co = cohere.Client(api_key=settings.COHERE_API_KEY)
 
@@ -63,20 +70,43 @@ class RerankRAG:
         those two cases together and declining to answer even when both
         halves of a comparison question were present, clean, and
         uncapped in context -- this rewording is meant to separate them.
+
+        Passages are labelled with their source entry and section so the
+        model can attribute claims ("the entry on Metaphysical Grounding
+        says...") rather than referring to an anonymous "context", which
+        is opaque to a reader and gives no route back to the source.
+        Entry titles only, not authors: the authors field in this corpus
+        is a stringified list with embedded emails and newlines, and
+        parsing it reliably isn't worth the effort when the linked entry
+        carries authorship anyway.
         """
-        context = "\n\n".join(d.page_content for d in docs)
+        labelled = []
+        for d in docs:
+            title = d.metadata.get("title", "unknown entry")
+            section = d.metadata.get("section", "")
+            header = f"[From the entry on {title}"
+            header += f", section: {section}]" if section else "]"
+            labelled.append(f"{header}\n{d.page_content}")
+        context = "\n\n".join(labelled)
+
         prompt = (
-            "Answer the question using only the facts in the context below.\n\n"
+            "Answer the question using only the facts in the passages below.\n\n"
+            "Each passage is labelled with the encyclopedia entry it comes from. "
+            "When you make a claim, say which entry it comes from, in the form "
+            "'the entry on X says...' or 'according to the entry on X'. Don't "
+            "refer to 'the context' or 'the passages' -- name the entry. If "
+            "several entries support the same point, name the most relevant "
+            "one rather than listing them all.\n\n"
             "If the question asks you to compare, connect, or relate two or more "
-            "things, and the context contains factual information about each of "
+            "things, and the passages contain factual information about each of "
             "them separately, construct that comparison yourself using only those "
             "facts -- the source text does not need to have already stated the "
-            "comparison explicitly for you to make it. Only say the context "
-            "doesn't contain the answer if it is missing the underlying facts "
-            "needed, not merely because it doesn't spell out the connection in "
+            "comparison explicitly for you to make it. Only say the passages "
+            "don't contain the answer if they are missing the underlying facts "
+            "needed, not merely because they don't spell out the connection in "
             "so many words.\n\n"
-            "Never invent facts that aren't in the context.\n\n"
-            f"Context:\n{context}\n\n"
+            "Never invent facts that aren't in the passages.\n\n"
+            f"Passages:\n{context}\n\n"
             f"Question: {question}"
         )
         response = self.llm.invoke(prompt)
@@ -421,7 +451,13 @@ class RerankRAG:
         return result
 
 
-    def query_multi_concat(self, question: str, max_subqueries: int = 5, k_per_subquery: int = 3) -> dict:
+    def query_multi_concat(
+        self,
+        question: str,
+        max_subqueries: int = 5,
+        k_per_subquery: int = 3,
+        generation_question: str = None,
+    ) -> dict:
         """
         Simpler alternative to query_multi(): no rerank, no max_per_title
         cap, no floor/fill phases. Each subquery just gets its own fixed
@@ -451,12 +487,23 @@ class RerankRAG:
                              generate (see generate_subqueries())
             k_per_subquery: how many chunks each individual subquery
                              contributes, before dedup
+            generation_question: what the LLM is asked to answer, if it
+                             should differ from what gets searched for.
+                             Callers carrying conversation history need
+                             this: prior turns help the model resolve a
+                             reference like "how does that relate to X",
+                             but stuffing that history into the retrieval
+                             query pollutes the search, since the earlier
+                             topic then competes with the current one for
+                             matches. Defaults to `question`.
         """
+        generation_question = generation_question or question
         subqueries = generate_subqueries(question, max_n=max_subqueries)
 
         seen = set()
         all_docs = []
-        for sq in subqueries:
+        origins = []  # which subquery produced each doc, parallel to all_docs
+        for sq_index, sq in enumerate(subqueries):
             docs = self.vectorstore.similarity_search(sq, k=k_per_subquery)
             for d in docs:
                 key = (d.metadata.get("title"), d.metadata.get("section"), d.metadata.get("chunk"))
@@ -464,20 +511,48 @@ class RerankRAG:
                     continue
                 seen.add(key)
                 all_docs.append(d)
+                origins.append(sq_index)
 
         if not all_docs:
-            return {"answer": "I couldn't find any relevant documents.", "sources": [], "subqueries": subqueries}
+            return {
+                "answer": "I couldn't find any relevant documents.",
+                "sources": [],
+                "subqueries": subqueries,
+                "source_origins": [],
+            }
 
-        result = self._generate(question, all_docs)
+        result = self._generate(generation_question, all_docs)
         result["subqueries"] = subqueries
+        # Index into `subqueries` for each source, so callers can group
+        # results by which sub-question found them. Deduplication means a
+        # chunk is attributed to the first subquery that retrieved it,
+        # not necessarily the only one that would have.
+        result["source_origins"] = origins
         return result
 
 
-# Simple manual test — run `python rag_pipeline.py` locally (never in production)
+# Simple manual smoke test — run `python rag_pipeline.py` locally.
+#
+# Uses query_multi_concat(), which is the path app.py actually serves.
+# The other methods remain available and are still exercised by
+# run_eval.py, but reranking is no longer the default anywhere a user
+# would hit it, on the strength of three separate evaluations finding it
+# flat-to-harmful in this pipeline.
 if __name__ == "__main__":
     rag = RerankRAG()
-    result = rag.query("What does Socrates think about death?")
+    result = rag.query_multi_concat("What does Socrates think about death?")
+
+    # Printing the subqueries makes the decomposition step visible. A
+    # single-topic question like this should produce one; if it produces
+    # several, the decomposition prompt has drifted back toward splitting
+    # by facet rather than by topic, which is a bug this project has hit
+    # before.
+    print("\nSUBQUERIES:")
+    for sq in result.get("subqueries", []):
+        print(" -", sq)
+
     print("\nANSWER:\n", result["answer"])
+
     print("\nSOURCES:")
     for s in result["sources"]:
         print(" -", s.get("title", "unknown"), "|", s.get("section", ""), "|", s.get("source", ""))

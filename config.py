@@ -20,6 +20,15 @@ class Settings:
     # --- Pinecone ---
     PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "sep-rag-index")
 
+    # Which namespace within the index to query. Namespaces are hard
+    # partitions: a query against one cannot see vectors in another. The
+    # full 1,803-article corpus lives in "articles-full"; the original
+    # 100-article test slice is in the default namespace (empty string),
+    # kept intact so the two remain comparable. Everything that queries
+    # the index should route through this setting rather than defaulting
+    # to the old test slice by accident.
+    PINECONE_NAMESPACE: str = os.getenv("PINECONE_NAMESPACE", "articles-full")
+
     # --- Models ---
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")
