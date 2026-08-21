@@ -291,3 +291,54 @@ This project's own result is a data point for that. A nineteen and a half fold e
 **What is missing before this is publishable, stated plainly.** The current result is n=1: one corpus, one embedding model, one chunking strategy, ten tail questions and five head questions written by two people. The metric is article-level retrieval recall, which cannot detect the within-article failures this project has separately documented occurring. A reviewer's first question would be whether the effect holds on a second corpus, and there is no answer to that yet. Minimum additions: a second and ideally third corpus with different composition characteristics, a metric that catches within-article failures, a substantially larger and less self-authored question set, and probably a collaborator with empirical ML evaluation experience.
 
 **Why it is parked rather than pursued.** A workshop paper is months of work for a credential that matters primarily in academia. The immediate priorities are shipping the pilot, the referee tool, and the job search, and the findings already do more as blog posts and a documented repo than they would as a preprint. The more promising route: if the referee tool works and philosophers use it, that generates a paper with real users and real data behind it, which is a stronger contribution than a scaling ablation on one corpus. Revisit after the pilot.
+
+## Implementation step 4: the pilot app, and a namespace bug caught in the process
+
+**A wiring gap found while building the app.** `rag_pipeline.py` connects to the index but never specified a namespace, so it was querying the default namespace, which still holds the original 100-article test slice. The full 1,803-article corpus sits in `articles-full`. This affected everything routed through `RerankRAG`, not just the app: `chat.py`, `check_chunks.py`, and `run_eval.py` were all silently querying the small corpus. Only `ingest.py` had namespace awareness, since that was the file the namespace work was done in.
+
+Worth noting this would have been invisible without looking for it. Every one of those tools would have run without error and returned plausible answers, just from the wrong corpus. The recall comparison in `11_Corpus_Scaling_Recall.ipynb` was unaffected because it queries Pinecone directly rather than through `RerankRAG`, which is why the full-corpus results were still valid.
+
+Fixed by adding `PINECONE_NAMESPACE` to `config.py`, defaulting to `articles-full`, and passing it through to `PineconeVectorStore` in `rag_pipeline.py`. Everything downstream now routes through one setting rather than defaulting to the old slice by accident.
+
+**Decisions made for the pilot app.**
+
+*Which pipeline.* `query_multi_concat()`, with no mode switching exposed to testers. Reranking is not disabled anywhere in the codebase; the app simply calls a method that has no rerank path. That was the minimal option: no changes to `rag_pipeline.py`, and `query_multi()` keeps its `use_rerank` default intact so existing eval comparisons remain reproducible.
+
+*Memory.* Three turns, implemented entirely in the app layer. Previous questions and truncated previous answers are prepended before the question reaches decomposition, so a follow-up like "how does that relate to physicalism" can resolve its reference. The pipeline itself stays stateless. Testers are told not to lean on it, for two reasons: self-contained questions retrieve better, and self-contained claims are the unit the referee tool will eventually operate on, so getting testers into that habit is useful beyond this pilot.
+
+*Sources.* Collapsible under each answer, showing article, section, a 400-character excerpt, and a link to the real entry. Also shows the generated subqueries when a question was split. The feedback plan asks testers whether the retrieved passages were right, which requires them to be visible; collapsing keeps the interface readable while making that judgement possible.
+
+*Cost control, two layers.* A hard budget cap on the OpenAI project holding the API key, plus a 15-query per-session limit in the app. The budget cap alone protects the wallet but produces raw API errors mid-session once exhausted; the session cap gives a clear message instead, and stops one enthusiastic tester consuming the entire budget in an afternoon.
+
+*Access.* Email plus a per-person password, stored as a `[passwords]` table in Streamlit secrets. One password each rather than a shared one, so access can be revoked individually.
+
+*Logging.* Google Sheets rather than local files, because Streamlit Community Cloud's filesystem is ephemeral and anything written to disk vanishes on restart or redeploy. Toggleable via a `LOGGING_ENABLED` secret without redeploying. Emails are hashed with a salt into short pseudonymous IDs, so one tester's questions can be grouped for analysis without storing who they are alongside their interactions. Logging failures are caught and never break a session. Testers are told in the intro that interactions are logged anonymously.
+
+**Still outstanding before shipping:** deploy to Streamlit Community Cloud, set up the Google Sheet and service account, generate per-tester passwords, and resolve the SEP terms-of-use question for a publicly-accessible app serving retrieved passages.
+
+## Verifying the namespace fix, and a smaller issue found along the way
+
+Ran `rag_pipeline.py`'s smoke test after wiring the namespace through. The fix worked, confirmed by the sources rather than by any assertion: results came back from *Socrates*, *Thomas More*, and *Religion and Morality*, all of which sit well past "Philosophy of Architecture" alphabetically and therefore could not have existed in the original 100-article slice.
+
+The answer quality also improved noticeably on the same question the smoke test has always used. Earlier runs drew mostly on *Afterlife* and *Ancient Political Philosophy*, which are relevant but oblique. The full corpus leads with the dedicated *Socrates* entry, and picks up the specific detail that Socrates read his guiding spirit's failure to intervene at the trial as an invitation from the gods, which is the kind of textual specificity a philosopher would expect.
+
+**The smoke test itself was outdated and has been updated.** It was still calling `query()`, the single-query reranked path, which is the path three separate evaluations in this project found flat-to-harmful. It now calls `query_multi_concat()`, matching what `app.py` actually serves, and prints the generated subqueries before the answer so the decomposition step is visible rather than silent.
+
+**A smaller issue surfaced immediately once subqueries were visible.** On the deliberately single-topic question "What does Socrates think about death?", decomposition returned:
+
+```
+- What are Socrates' views on death?
+- What does Socrates think about death?
+```
+
+That is a paraphrase plus the original, not a decomposition. The topic-first structured output was supposed to return exactly one subquery for a single-topic question, which was verified when that fix was built. What appears to be happening is that the model reformulates rather than passing the question through unchanged, and the safety-net logic then appends the original because it is not an exact string match, producing two near-identical searches.
+
+Not harmful. Two nearly-identical retrievals waste an API call but do not degrade the answer, which in this case was better than the reranked version, correctly catching the tension between the *Apology*'s agnosticism about the soul and the *Phaedo*'s arguments for its immortality. But it does mean the "one topic, one subquery" behaviour is not holding as cleanly in practice as it did when tested in isolation. Worth checking whether the pattern is consistent across other single-topic questions; if so, the decomposition prompt likely needs an explicit line stating that returning the question unchanged is a valid output. Parked as a low-priority item, not a blocker for the pilot.
+
+## Changes made in this session, summarised
+
+- `config.py`: added `PINECONE_NAMESPACE`, defaulting to `articles-full`, so everything that queries the index routes through one setting rather than silently defaulting to the old 100-article slice.
+- `rag_pipeline.py`: passes that namespace through to `PineconeVectorStore`; smoke test switched from `query()` to `query_multi_concat()` and now prints subqueries.
+- `ingest.py`: namespace support, retry with exponential backoff, per-article error handling, end-of-run failure summary, and a corrected TOC-warning threshold that no longer fires on a single failed article.
+- `app.py`: new Streamlit pilot interface. Per-person password auth, 15-query session cap, three-turn app-layer memory, collapsible sources with excerpts and links, anonymised Google Sheets logging with a toggle.
+- `secrets_template.toml`: template for Streamlit secrets, covering API keys, namespace, logging config, and the per-tester password table.
